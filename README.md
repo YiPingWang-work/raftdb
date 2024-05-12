@@ -22,6 +22,7 @@
 
 #### leader：
 
+
 	1.leader收到一个term大于自己的请求：
 			立即退化成follower，之后按照follower处理。
 	
@@ -48,6 +49,7 @@
 
 
 #### follower:
+
 
 	1.follower收到一个大于自己term的请求：
 			将自己的term修改至一样，投票清零，跳转至3。
@@ -77,6 +79,7 @@
 
 
 #### candidate:	
+
 
 	1.candidate收到一个大于自己term的请求：
 			立即退化成follower，之后按照follower的逻辑处理。
