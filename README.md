@@ -1,4 +1,4 @@
-![image](https://github.com/YiPingWang-work/RaftDB/assets/145415674/85c5487f-c821-4369-90cb-1833bd3acad3)## 高可用分布式日志数据库
+## 高可用分布式日志数据库
 ## 本分支增加KV数据库和Watch机制
 ​																													by YipingWang
 
