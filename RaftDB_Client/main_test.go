@@ -11,7 +11,7 @@ import (
 
 func Test(t *testing.T) {
 	db := KVDB.KVDBClient{}
-	addr := "localhost:18001"
+	addr := "localhost:18002"
 	pool := sync.Pool{New: func() interface{} {
 		client, err := rpc.Dial("tcp", addr)
 		if err != nil {
@@ -20,7 +20,7 @@ func Test(t *testing.T) {
 			return client
 		}
 	}}
-	for i := 500000; i < 600000; i++ {
+	for i := 1100; i < 20000; i++ {
 		i := i
 		//go func() {
 		content, _ := db.Parser(fmt.Sprintf("write %d %d", i, i+1))
@@ -29,7 +29,7 @@ func Test(t *testing.T) {
 			fmt.Println("fuck")
 			break
 		}
-		req := Msg.Msg{Log: Msg.LogType(content), Term: 50000000, Agree: content[1] == 'r'}
+		req := Msg.Msg{Log: Msg.LogType(content), Term: 50000, Agree: content[1] == 'r'}
 		rep := ""
 		if err := client.Call("RPC.Write", req, &rep); err != nil {
 			fmt.Println(err)
