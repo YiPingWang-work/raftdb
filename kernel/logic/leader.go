@@ -3,10 +3,10 @@ package logic
 import (
 	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/log_plus"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 )
 
 /*
@@ -33,11 +33,11 @@ func (l *Leader) processHeartbeat(*pipe.Message, *Me) error {
 	panic("maybe two leaders")
 }
 
-func (l *Leader) processAppendLog(*pipe.Message, *Me) error {
+func (l *Leader) processAppend(*pipe.Message, *Me) error {
 	panic("maybe two leaders")
 }
 
-func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
+func (l *Leader) processAppendReply(msg *pipe.Message, me *Me) error {
 	reply := pipe.Message{
 		Type:       pipe.Commit,
 		From:       me.meta.Id,
@@ -57,7 +57,7 @@ func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
 				如果回复的key自己已经提交，则不用参与计票，直接对其确认，发送给源follower。
 			*/
 			reply.To = []int{msg.From}
-			log.Printf("Leader: %d should commit my committed log %v\n", msg.From, msg.LastLogKey)
+			log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: %d should commit my committed log %v\n", msg.From, msg.LastLogKey)
 		} else {
 			/*
 				计票，如果发现票数已经达到quorum，同时回复的key的Term为当前任期，则提交该日志，包括：更新元数据、内存更新日志、持久化日志到磁盘（上一次提交的日志到本条日志）。
@@ -74,16 +74,11 @@ func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
 				if meta, err := json.Marshal(*me.meta); err != nil {
 					return err
 				} else {
-					me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Log: string(meta)}}
+					me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Content: string(meta)}}
 				}
-				previousCommitted := me.raftLogSet.Commit(msg.LastLogKey)
-				secondLastKey, _ := me.raftLogSet.GetNext(previousCommitted)
-				me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{
-					Agree:            false,
-					LastLogKey:       msg.LastLogKey,
-					SecondLastLogKey: secondLastKey,
-				}}
-				for _, v := range me.raftLogSet.GetLogsByRange(secondLastKey, msg.LastLogKey) {
+				from, _ := me.raftLogSet.GetNext(me.raftLogSet.Commit(msg.LastLogKey))
+				to := msg.LastLogKey
+				for _, v := range me.raftLogSet.GetLogsByRange(from, to) {
 					// 成功同步了，需要将同步的信息进行执行
 					if id, has := me.mapKeyClient[v.K]; has {
 						me.toCrownChan <- pipe.Something{ClientId: id, NeedReply: true, Content: v.V}
@@ -95,7 +90,7 @@ func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
 				}
 				reply.To = me.members
 				me.timer.Reset(me.leaderHeartbeat)
-				log.Printf("Leader: quorum have agreed request %v, I will commit and boardcast it\n", msg.LastLogKey)
+				log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: quorum have agreed request %v, I will commit and boardcast it\n", msg.LastLogKey)
 			}
 		}
 		/*
@@ -108,15 +103,15 @@ func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
 				return err
 			}
 			me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: pipe.Message{
-				Type:             pipe.AppendLog,
+				Type:             pipe.AppendRaftLog,
 				From:             reply.From,
 				To:               []int{msg.From},
 				Term:             reply.Term,
 				LastLogKey:       nextKey,
 				SecondLastLogKey: msg.LastLogKey,
-				Log:              req,
+				Content:          req,
 			}}
-			log.Printf("Leader: %d accept my request %v, but %d's raftLogSet is not complete, send request %v\n",
+			log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: %d accept my request %v, but %d's raftLogSet is not complete, send request %v\n",
 				msg.From, msg.LastLogKey, msg.From, nextKey)
 		}
 	} else {
@@ -130,13 +125,13 @@ func (l *Leader) processAppendLogReply(msg *pipe.Message, me *Me) error {
 			reply.LastLogKey, _ = me.raftLogSet.GetPrevious(msg.LastLogKey)
 			reply.SecondLastLogKey, _ = me.raftLogSet.GetPrevious(reply.LastLogKey)
 		}
-		reply.Type, reply.To = pipe.AppendLog, []int{msg.From}
+		reply.Type, reply.To = pipe.AppendRaftLog, []int{msg.From}
 		if v, _err := me.raftLogSet.GetVByK(reply.LastLogKey); _err != nil {
 			return _err
 		} else {
-			reply.Log = v
+			reply.Content = v
 		}
-		log.Printf("Leader: %d refuse my request %v, his raftLogSet are not complete, which is %v, send request %v\n",
+		log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: %d refuse my request %v, his raftLogSet are not complete, which is %v, send request %v\n",
 			msg.From, msg.LastLogKey, msg.SecondLastLogKey, reply.LastLogKey)
 	}
 	if len(reply.To) != 0 {
@@ -166,13 +161,13 @@ func (l *Leader) processPreVoteReply(*pipe.Message, *Me) error {
 }
 
 func (l *Leader) processFromClient(msg *pipe.Message, me *Me) error {
-	log.Printf("Leader: a msg from client: %v\n", msg)
+	log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: a msg from client: %v\n", msg)
 	if msg.Agree {
 		if err := l.processClientSync(msg, me); err != nil {
 			return err
 		}
 	} else {
-		me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Log}
+		me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Content}
 	}
 	return nil
 }
@@ -186,21 +181,26 @@ func (l *Leader) processClientSync(msg *pipe.Message, me *Me) error {
 	secondLastKey := me.raftLogSet.GetLast()
 	lastLogKey := raft_log.RaftKey{Term: me.meta.Term, Index: l.index}
 	me.mapKeyClient[lastLogKey] = msg.From
-	me.raftLogSet.Append(raft_log.RaftLog{K: lastLogKey, V: msg.Log})
+	me.raftLogSet.Append(raft_log.RaftLog{K: lastLogKey, V: msg.Content})
 	l.agreeMap[lastLogKey] = map[int]struct{}{}
+	me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{
+		Type:       pipe.FileAppend,
+		Agree:      false,
+		LastLogKey: lastLogKey,
+	}}
 	me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: pipe.Message{
-		Type:             pipe.AppendLog,
+		Type:             pipe.AppendRaftLog,
 		From:             me.meta.Id,
 		To:               me.members,
 		Term:             me.meta.Term,
 		Agree:            false,
 		LastLogKey:       lastLogKey,
 		SecondLastLogKey: secondLastKey,
-		Log:              msg.Log,
+		Content:          msg.Content,
 	}}
 	me.timer.Reset(me.leaderHeartbeat)
 	l.index++
-	log.Printf("Leader: reveive a client's request whose key: %v, log: %v, now I will broadcast it\n", lastLogKey, msg.Log)
+	log_plus.Printf(log_plus.DEBUG_LEADER, "Leader: reveive a client's request whose key: %v, log: %v, now I will broadcast it\n", lastLogKey, msg.Content)
 	return nil
 }
 
@@ -214,7 +214,7 @@ func (l *Leader) processTimeout(me *Me) error {
 		SecondLastLogKey: me.raftLogSet.GetSecondLast(),
 	}}
 	me.timer.Reset(me.leaderHeartbeat)
-	log.Println("Leader: timeout")
+	log_plus.Println(log_plus.DEBUG_LEADER, "Leader: timeout")
 	return nil
 }
 
@@ -235,5 +235,5 @@ func (l *Leader) ToString() string {
 		}
 		res += s + "\n"
 	}
-	return res + "==LEADER=="
+	return res + "====LEADER===="
 }

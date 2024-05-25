@@ -1,8 +1,8 @@
 package kvdb
 
 import (
+	"RaftDB/log_plus"
 	"fmt"
-	"log"
 	"math/rand"
 	"strings"
 	"time"
@@ -39,8 +39,9 @@ type App interface {
 */
 
 type KVDB struct {
-	data  map[string]string
-	delay time.Duration
+	data   map[string]string
+	delay  int
+	random bool
 }
 
 func (k *KVDB) Init() func(string) (bool, string, string) {
@@ -54,8 +55,8 @@ func (k *KVDB) Init() func(string) (bool, string, string) {
 	}
 }
 func (k *KVDB) Process(in string) (out string, agree bool, watching bool, err error) {
-	log.Printf("kvdb: process: %s\n", in)
-	time.Sleep(k.delay)
+	log_plus.Printf(log_plus.DEBUG_DB, "kvdb: process: %s\n", in)
+	k.disturb()
 	if x, legal := k.parser(in); !legal {
 		return "db: illegal operation", false, false, nil
 	} else {
@@ -93,11 +94,8 @@ func (k *KVDB) parser(order string) (op, bool) {
 }
 
 func (k *KVDB) ChangeProcessDelay(delay int, random bool) {
-	if !random {
-		k.delay = time.Duration(delay) * time.Millisecond
-	} else {
-		k.delay = time.Duration(rand.Intn(delay)) * time.Millisecond
-	}
+	k.delay = delay
+	k.random = random
 }
 
 func (k *KVDB) ToString() string {
@@ -108,4 +106,12 @@ func (k *KVDB) ToString() string {
 	return u
 }
 
-// 可以从日志中恢复
+func (k *KVDB) disturb() {
+	if k.delay != 0 {
+		if k.random {
+			time.Sleep(time.Duration(k.delay/5+rand.Intn(k.delay/5*4)) * time.Millisecond)
+		} else {
+			time.Sleep(time.Duration(k.delay) * time.Millisecond)
+		}
+	}
+}

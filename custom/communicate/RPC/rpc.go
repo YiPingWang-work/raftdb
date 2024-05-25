@@ -2,8 +2,8 @@ package RPC
 
 import (
 	"RaftDB/kernel/pipe"
+	"RaftDB/log_plus"
 	"errors"
-	"log"
 	"math/rand"
 	"net"
 	"net/rpc"
@@ -32,7 +32,8 @@ import (
 type RPC struct {
 	clientChans     sync.Map
 	replyChan       chan<- pipe.Order
-	delay           time.Duration
+	delay           int
+	random          bool
 	num             atomic.Int32
 	alwaysConnPools map[string]*sync.Pool
 }
@@ -74,7 +75,9 @@ func (r *RPC) ReplyNode_old_version(addr string, msg interface{}) error {
 			return err
 		}
 		defer client.Close()
-		time.Sleep(r.delay)
+		if r.disturb() {
+			return nil
+		}
 		if err = client.Call("RPC.Push", x, nil); err != nil {
 			return err
 		}
@@ -90,7 +93,9 @@ func (r *RPC) ReplyNode(addr string, msg interface{}) error {
 			if client, ok := pool.Get().(*rpc.Client); !ok {
 				return errors.New("lose connect")
 			} else {
-				time.Sleep(r.delay)
+				if r.disturb() {
+					return nil
+				}
 				if err := client.Call("RPC.Push", x, nil); err != nil {
 					return err
 				}
@@ -111,7 +116,7 @@ func (r *RPC) Listen(addr string) error {
 	defer listener.Close()
 	for {
 		if conn, err := listener.Accept(); err != nil {
-			log.Println(err)
+			log_plus.Println(log_plus.DEBUG_COMMUNICATE, err)
 		} else {
 			go rpc.ServeConn(conn)
 		}
@@ -119,18 +124,14 @@ func (r *RPC) Listen(addr string) error {
 }
 
 func (r *RPC) ChangeNetworkDelay(delay int, random bool) {
-	if !random {
-		r.delay = time.Duration(delay) * time.Millisecond
-	} else {
-		r.delay = time.Duration(rand.Intn(delay)) * time.Millisecond
-	}
+	r.delay = delay
+	r.random = random
 }
 
 func (r *RPC) ReplyClient(msg interface{}) error {
 	if x, ok := msg.(pipe.Message); !ok {
 		return errors.New("RPC: ReplyClient need a order.Message")
 	} else {
-		log.Println("================================================")
 		ch, ok := r.clientChans.Load(x.From)
 		if ok {
 			select {
@@ -143,7 +144,9 @@ func (r *RPC) ReplyClient(msg interface{}) error {
 }
 
 func (r *RPC) Push(rec pipe.Message, _ *string) error {
-	time.Sleep(r.delay)
+	if r.disturb() {
+		return nil
+	}
 	r.replyChan <- pipe.Order{Type: pipe.FromNode, Msg: rec}
 	return nil
 }
@@ -156,11 +159,25 @@ func (r *RPC) Write(rec pipe.Message, rep *string) error {
 	timer := time.After(time.Duration(rec.Term) * time.Millisecond)
 	select {
 	case msg := <-ch:
-		*rep = msg.Log
+		*rep = msg.Content
 	case <-timer:
 		*rep = "timeout"
 	}
 	close(ch)
 	r.clientChans.Delete(rec.From)
 	return nil
+}
+
+func (r *RPC) disturb() bool {
+	if r.delay != 0 {
+		if r.random {
+			time.Sleep(time.Duration(r.delay/5+rand.Intn(r.delay/5*4)) * time.Millisecond)
+		} else {
+			time.Sleep(time.Duration(r.delay) * time.Millisecond)
+		}
+		if r.random && rand.Intn(100) == 0 {
+			return true
+		}
+	}
+	return false
 }

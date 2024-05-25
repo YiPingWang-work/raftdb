@@ -28,7 +28,7 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		req := Msg.Msg{Log: Msg.LogType(content), Term: 50000000, Agree: content[1] == 'r'}
+		req := Msg.Msg{Content: Msg.LogType(content), Term: 50000000, Agree: content[1] == 'r'}
 		rep := ""
 		if err := client.Call("RPC.Write", req, &rep); err != nil {
 			fmt.Println(err)

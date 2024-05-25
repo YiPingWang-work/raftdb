@@ -21,12 +21,13 @@ const (
 )
 
 type Msg struct {
-	Type             MsgType    `json:"type"`
-	From             int        `json:"from"`
-	To               []int      `json:"to"`
-	Term             int        `json:"term"`
-	Agree            bool       `json:"agree"`
-	LastLogKey       LogKeyType `json:"last_log_key"`
-	SecondLastLogKey LogKeyType `json:"second_last_log_key"`
-	Log              LogType    `json:"log"`
+	Type             MsgType     `json:"type"`
+	From             int         `json:"from"`
+	To               []int       `json:"to"`
+	Term             int         `json:"term"`
+	Agree            bool        `json:"agree"`
+	LastLogKey       LogKeyType  `json:"last_log_key"`
+	SecondLastLogKey LogKeyType  `json:"second_last_log_key"`
+	Content          LogType     `json:"content"`
+	Others           interface{} `json:"-"`
 }

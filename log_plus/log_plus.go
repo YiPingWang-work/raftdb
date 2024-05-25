@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-var Grade uint8 = 0
+var Grade uint64 = 0
 var LogFile string
 
 var (
@@ -32,8 +32,7 @@ func getLogger() *log.Logger {
 }
 
 const (
-	DEBUG_LEADER      = 1 << 0
-	SUBMIT_RETURN     = 1 << 1
+	DEBUG_LEADER      = 1 << 1
 	DEBUG_FOLLOWER    = 1 << 2
 	DEBUG_CANDIDATE   = 1 << 3
 	DEBUG_DB          = 1 << 4
@@ -43,21 +42,22 @@ const (
 	DEBUG_STORE       = 1 << 7
 	DEBUG_COMMUNICATE = 1 << 8
 	DEBUG_OTHER       = 1 << 9
+	DEBUG_ALL         = (1 << 10) - 1
 )
 
-func Printf(grade uint8, format string, v ...any) {
+func Printf(grade uint64, format string, v ...any) {
 	if (grade & Grade) > 0 {
 		getLogger().Printf(format, v...)
 	}
 }
 
-func Print(grade uint8, v ...any) {
+func Print(grade uint64, v ...any) {
 	if (grade & Grade) > 0 {
 		getLogger().Print(v...)
 	}
 }
 
-func Println(grade uint8, v ...any) {
+func Println(grade uint64, v ...any) {
 	if (grade & Grade) > 0 {
 		getLogger().Println(v...)
 	}

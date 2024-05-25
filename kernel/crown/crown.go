@@ -3,7 +3,7 @@ package crown
 import (
 	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
-	"log"
+	"RaftDB/log_plus"
 )
 
 /*
@@ -35,15 +35,15 @@ type App interface {
 crown初始化，保存获取Logic层和crown层的通讯管道，初始化APP，应用Logic层的日志。
 */
 
-func (c *Crown) Init(logSet *raft_log.RaftLogSet, app App,
+func (c *Crown) Init(raftLogSet *raft_log.RaftLogSet, app App,
 	fromLogicChan <-chan pipe.Something, toLogicChan chan<- pipe.Something) {
 
 	c.toLogicChan, c.fromLogicChan = toLogicChan, fromLogicChan
 	c.app, c.watchingMap = app, map[string][]int{}
 	c.watchTrigger = c.app.Init()
-	for _, v := range logSet.GetAll() {
+	for _, v := range raftLogSet.GetAll() {
 		if _, ok, _, err := c.app.Process(v.V); err != nil || !ok {
-			log.Println("error: process history log error")
+			log_plus.Println(log_plus.DEBUG_CROWN, "error: process history log error")
 		}
 	}
 }
@@ -63,24 +63,24 @@ func (c *Crown) Run() {
 			if maybe, key, reply := c.watchTrigger(sth.Content); maybe && c.watchingMap[key] != nil {
 				for _, v := range c.watchingMap[key] {
 					c.toLogicChan <- pipe.Something{ClientId: v, Agree: true, Content: reply}
-					log.Printf("crown: %d's watching event '%s' has been triggered\n", v, key)
+					log_plus.Printf(log_plus.DEBUG_CROWN, "crown: %d's watching event '%s' has been triggered\n", v, key)
 				}
 				delete(c.watchingMap, key)
 			}
 			if len(sth.Content) > 0 && sth.Content[0] == '!' {
 				if out, agree, err := c.app.UndoProcess(sth.Content); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_CROWN, err)
 				} else if sth.NeedReply {
 					sth.Content, sth.Agree = out, agree
 					c.toLogicChan <- sth
 				}
 			} else {
 				if out, agree, watching, err := c.app.Process(sth.Content); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_CROWN, err)
 				} else {
 					if watching {
 						c.watchingMap[out] = append(c.watchingMap[out], sth.ClientId)
-						log.Printf("crown: %d registers a watching event '%s'\n", sth.ClientId, out)
+						log_plus.Printf(log_plus.DEBUG_CROWN, "crown: %d registers a watching event '%s'\n", sth.ClientId, out)
 					} else if sth.NeedReply {
 						sth.Content, sth.Agree = out, agree
 						c.toLogicChan <- sth

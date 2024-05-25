@@ -4,9 +4,9 @@ import (
 	"RaftDB/kernel/meta"
 	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/log_plus"
 	"encoding/json"
 	"errors"
-	"log"
 	"time"
 )
 
@@ -37,8 +37,8 @@ Role接口定义了处理各种消息的函数，Follower、Leader、Candidate�
 type Role interface {
 	init(me *Me) error
 	processHeartbeat(msg *pipe.Message, me *Me) error
-	processAppendLog(msg *pipe.Message, me *Me) error
-	processAppendLogReply(msg *pipe.Message, me *Me) error
+	processAppend(msg *pipe.Message, me *Me) error
+	processAppendReply(msg *pipe.Message, me *Me) error
 	processCommit(msg *pipe.Message, me *Me) error
 	processVote(msg *pipe.Message, me *Me) error
 	processVoteReply(msg *pipe.Message, me *Me) error
@@ -56,10 +56,10 @@ type Role interface {
 初始化，设置元数据信息，设置日志信息，设置超时时间，设置通讯管道（包括通向bottom端的和通向crown端的）
 */
 
-func (m *Me) Init(meta *meta.Meta, logSet *raft_log.RaftLogSet,
+func (m *Me) Init(meta *meta.Meta, raftLogSet *raft_log.RaftLogSet,
 	fromBottomChan <-chan pipe.Order, toBottomChan chan<- pipe.Order,
 	fromCrownChan <-chan pipe.Something, toCrownChan chan<- pipe.Something) {
-	m.meta, m.raftLogSet = meta, logSet
+	m.meta, m.raftLogSet = meta, raftLogSet
 	m.fromBottomChan, m.toBottomChan = fromBottomChan, toBottomChan
 	m.fromCrownChan, m.toCrownChan = fromCrownChan, toCrownChan
 	m.syncFailedChan = make(chan int, 10000)
@@ -74,7 +74,7 @@ func (m *Me) Init(meta *meta.Meta, logSet *raft_log.RaftLogSet,
 	m.candidateVoteTimeout = time.Duration(meta.CandidateVoteTimeout) * time.Millisecond
 	m.candidatePreVoteTimeout = time.Duration(meta.CandidatePreVoteTimeout) * time.Millisecond
 	if err := m.switchToFollower(m.meta.Term, false, &pipe.Message{}); err != nil {
-		log.Println(err)
+		log_plus.Println(log_plus.DEBUG_LOGIC, err)
 	}
 }
 
@@ -95,32 +95,32 @@ func (m *Me) Run() {
 			}
 			if order.Type == pipe.FromNode {
 				if err := m.processFromNode(&order.Msg); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_LOGIC, err)
 				}
 			}
 			if order.Type == pipe.FromClient {
 				if err := m.role.processFromClient(&order.Msg, m); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_LOGIC, err)
 					m.toBottomChan <- pipe.Order{Type: pipe.ClientReply,
-						Msg: pipe.Message{From: order.Msg.From, Log: "logic refuses to operate"}}
+						Msg: pipe.Message{From: order.Msg.From, Content: "logic refuses to operate"}}
 				}
 			}
 		case <-m.timer.C:
 			if err := m.role.processTimeout(m); err != nil {
-				log.Println(err)
+				log_plus.Println(log_plus.DEBUG_LOGIC, err)
 			}
 		case sth, opened := <-m.fromCrownChan:
 			if !opened {
 				panic("crown chan is closed")
 			}
 			m.toBottomChan <- pipe.Order{Type: pipe.ClientReply,
-				Msg: pipe.Message{From: sth.ClientId, Log: sth.Content}}
+				Msg: pipe.Message{From: sth.ClientId, Content: sth.Content}}
 		case id, opened := <-m.syncFailedChan:
 			if !opened {
 				panic("syncFailed chan is closed")
 			}
 			m.toBottomChan <- pipe.Order{Type: pipe.ClientReply,
-				Msg: pipe.Message{From: id, Log: "logic sync failed"}}
+				Msg: pipe.Message{From: id, Content: "logic sync failed"}}
 		}
 	}
 }
@@ -141,10 +141,10 @@ func (m *Me) processFromNode(msg *pipe.Message) error {
 	switch msg.Type {
 	case pipe.Heartbeat:
 		return m.role.processHeartbeat(msg, m)
-	case pipe.AppendLog:
-		return m.role.processAppendLog(msg, m)
-	case pipe.AppendLogReply:
-		return m.role.processAppendLogReply(msg, m)
+	case pipe.AppendRaftLog:
+		return m.role.processAppend(msg, m)
+	case pipe.AppendRaftLogReply:
+		return m.role.processAppendReply(msg, m)
 	case pipe.Commit:
 		return m.role.processCommit(msg, m)
 	case pipe.Vote:
@@ -165,13 +165,13 @@ func (m *Me) processFromNode(msg *pipe.Message) error {
 */
 
 func (m *Me) switchToFollower(term int, has bool, msg *pipe.Message) error {
-	log.Printf("==== switch to follower, my term is %d, has remain msg to process: %v ====\n", term, has)
+	log_plus.Printf(log_plus.DEBUG_LOGIC, "==== switch to follower, my term is %d, has remain msg to process: %v ====\n", term, has)
 	if m.meta.Term < term {
 		m.meta.Term = term
 		if metaTmp, err := json.Marshal(*m.meta); err != nil {
 			return err
 		} else {
-			m.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Log: string(metaTmp)}}
+			m.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Content: string(metaTmp)}}
 		}
 	}
 	m.role = &follower
@@ -189,7 +189,7 @@ func (m *Me) switchToFollower(term int, has bool, msg *pipe.Message) error {
 */
 
 func (m *Me) switchToLeader() error {
-	log.Printf("==== switch to leader, my term is %d ====\n", m.meta.Term)
+	log_plus.Printf(log_plus.DEBUG_LOGIC, "==== switch to leader, my term is %d ====\n", m.meta.Term)
 	m.role = &leader
 	return m.role.init(m)
 }
@@ -199,7 +199,7 @@ func (m *Me) switchToLeader() error {
 */
 
 func (m *Me) switchToCandidate() error {
-	log.Printf("==== switch to candidate, my term is %d ====\n", m.meta.Term)
+	log_plus.Printf(log_plus.DEBUG_LOGIC, "==== switch to candidate, my term is %d ====\n", m.meta.Term)
 	m.role = &candidate
 	return m.role.init(m)
 }

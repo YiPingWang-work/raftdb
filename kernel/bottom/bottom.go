@@ -4,13 +4,13 @@ import (
 	"RaftDB/kernel/meta"
 	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
-	"log"
+	"RaftDB/log_plus"
 )
 
 type Bottom struct {
 	communicate   Communicate
 	store         Store
-	logs          *raft_log.RaftLogSet
+	raftLogSet    *raft_log.RaftLogSet
 	fromLogicChan <-chan pipe.Order // 接收me消息的管道
 	toLogicChan   chan<- pipe.Order // 发送消息给me的管道
 }
@@ -24,19 +24,19 @@ bottom初始化，它需要完成：
 一旦初始化为正确执行，Panic结束。
 */
 
-func (b *Bottom) Init(confPath string, filePath string, meta *meta.Meta, logs *raft_log.RaftLogSet,
+func (b *Bottom) Init(confPath string, filePath string, meta *meta.Meta, raftLogSet *raft_log.RaftLogSet,
 	medium Medium, cable Cable, fromLogicChan <-chan pipe.Order, toLogicChan chan<- pipe.Order,
 	mediumParam interface{}, cableParam interface{}) {
 
-	b.store, b.logs = Store{}, logs
+	b.store, b.raftLogSet = Store{}, raftLogSet
 	b.fromLogicChan, b.toLogicChan = fromLogicChan, toLogicChan
-	if err := b.store.initAndLoad(confPath, filePath, meta, logs, medium, mediumParam); err != nil {
+	if err := b.store.initAndLoad(confPath, filePath, meta, raftLogSet, medium, mediumParam); err != nil {
 		panic(err)
 	}
 	if err := b.communicate.init(cable, meta.Dns[meta.Id], meta.Dns[0:meta.Num], cableParam); err != nil {
 		panic(err)
 	}
-	logs.Init(meta.CommittedKeyTerm, meta.CommittedKeyIndex)
+	raftLogSet.Init(meta.CommittedKeyTerm, meta.CommittedKeyIndex)
 }
 
 /*
@@ -62,26 +62,31 @@ func (b *Bottom) Run() {
 			}
 			if order.Type == pipe.Store {
 				if order.Msg.Agree {
-					log.Println("bottom: update meta")
-					if err := b.store.updateMeta(order.Msg.Log); err != nil {
-						log.Println(err)
+					if err := b.store.updateMeta(order.Msg.Content); err != nil {
+						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
 					}
-				} else {
-					log.Printf("bottom: write log from %d to %d\n", order.Msg.SecondLastLogKey, order.Msg.LastLogKey)
-					contents := b.logs.GetLogsByRange(order.Msg.SecondLastLogKey, order.Msg.LastLogKey)
-					if err := b.store.appendLogs(&contents); err != nil {
-						log.Println(err)
+					log_plus.Println(log_plus.DEBUG_BOTTOM, "bottom: update meta")
+				} else if order.Msg.Type == pipe.FileAppend {
+					raftLog, _ := b.raftLogSet.GetLogByK(order.Msg.LastLogKey)
+					if err := b.store.appendLog(raftLog); err != nil {
+						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+					}
+					log_plus.Printf(log_plus.DEBUG_BOTTOM, "bottom: write log from %d to %d\n", order.Msg.SecondLastLogKey, order.Msg.LastLogKey)
+				} else if order.Msg.Type == pipe.FileTruncate {
+					raftLogs, _ := order.Msg.Others.([]raft_log.RaftLog)
+					if err := b.store.truncateLog(raftLogs); err != nil {
+						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
 					}
 				}
 			}
 			if order.Type == pipe.NodeReply {
 				if err := b.communicate.replyNode(order.Msg); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_BOTTOM, err)
 				}
 			}
 			if order.Type == pipe.ClientReply {
 				if err := b.communicate.ReplyClient(order.Msg); err != nil {
-					log.Println(err)
+					log_plus.Println(log_plus.DEBUG_BOTTOM, err)
 				}
 			}
 		}

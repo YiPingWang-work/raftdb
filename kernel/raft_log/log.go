@@ -21,7 +21,7 @@ type RaftLog struct {
 }
 
 type RaftLogSet struct {
-	logs         []RaftLog
+	raftLogs     []RaftLog
 	committedKey RaftKey
 	m            sync.RWMutex
 }
@@ -45,7 +45,7 @@ func (k RaftKey) Equals(key RaftKey) bool {
 }
 
 func LogToString(content RaftLog) string {
-	return fmt.Sprintf("%d$%d^%s", content.K.Term, content.K.Index, content.V)
+	return fmt.Sprintf("%d$%d^%s\n", content.K.Term, content.K.Index, content.V)
 }
 
 func StringToLog(v string) (content RaftLog, err error) {
@@ -54,7 +54,7 @@ func StringToLog(v string) (content RaftLog, err error) {
 	if len(res) < 2 {
 		return
 	}
-	logStr := res[1]
+	str := res[1]
 	res = strings.SplitN(res[0], "$", 2)
 	if len(res) < 2 {
 		return
@@ -67,7 +67,7 @@ func StringToLog(v string) (content RaftLog, err error) {
 	if err != nil {
 		return
 	}
-	return RaftLog{RaftKey{Term: term, Index: index}, logStr}, nil
+	return RaftLog{RaftKey{Term: term, Index: index}, str}, nil
 }
 
 func (l *RaftLogSet) Init(committedKeyTerm int, committedKeyIndex int) {
@@ -77,8 +77,8 @@ func (l *RaftLogSet) Init(committedKeyTerm int, committedKeyIndex int) {
 func (l *RaftLogSet) GetLast() RaftKey {
 	res := RaftKey{Term: -1, Index: -1}
 	l.m.RLock()
-	if len(l.logs) >= 1 {
-		res = l.logs[len(l.logs)-1].K
+	if len(l.raftLogs) >= 1 {
+		res = l.raftLogs[len(l.raftLogs)-1].K
 	}
 	l.m.RUnlock()
 	return res
@@ -87,8 +87,8 @@ func (l *RaftLogSet) GetLast() RaftKey {
 func (l *RaftLogSet) GetSecondLast() RaftKey {
 	res := RaftKey{Term: -1, Index: -1}
 	l.m.RLock()
-	if len(l.logs) >= 2 {
-		res = l.logs[len(l.logs)-2].K
+	if len(l.raftLogs) >= 2 {
+		res = l.raftLogs[len(l.raftLogs)-2].K
 	}
 	l.m.RUnlock()
 	return res
@@ -100,8 +100,8 @@ func (l *RaftLogSet) GetCommitted() RaftKey {
 
 func (l *RaftLogSet) Append(content RaftLog) { // 幂等的增加日志
 	l.m.Lock()
-	if len(l.logs) == 0 || l.logs[len(l.logs)-1].K.Less(content.K) {
-		l.logs = append(l.logs, content)
+	if len(l.raftLogs) == 0 || l.raftLogs[len(l.raftLogs)-1].K.Less(content.K) {
+		l.raftLogs = append(l.raftLogs, content)
 	}
 	l.m.Unlock()
 }
@@ -113,17 +113,17 @@ func (l *RaftLogSet) GetPrevious(key RaftKey) (RaftKey, error) { // 如果key不
 		l.m.RUnlock()
 		return res, errors.New("there is no your key")
 	}
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left < right {
 		mid := (left + right + 1) / 2
-		if !l.logs[mid].K.Less(key) {
+		if !l.raftLogs[mid].K.Less(key) {
 			right = mid - 1
 		} else {
 			left = mid
 		}
 	}
-	if l.logs[left].K.Less(key) {
-		res = l.logs[left].K
+	if l.raftLogs[left].K.Less(key) {
+		res = l.raftLogs[left].K
 	}
 	l.m.RUnlock()
 	return res, nil
@@ -132,25 +132,25 @@ func (l *RaftLogSet) GetPrevious(key RaftKey) (RaftKey, error) { // 如果key不
 func (l *RaftLogSet) GetNext(key RaftKey) (RaftKey, error) { // 如果key不存在，报错，如果key没有下一个返回-1-1
 	l.m.RLock()
 	res := RaftKey{Term: -1, Index: -1}
-	if key.Equals(RaftKey{-1, -1}) && len(l.logs) > 0 {
+	if key.Equals(RaftKey{-1, -1}) && len(l.raftLogs) > 0 {
 		l.m.RUnlock()
-		return l.logs[0].K, nil
+		return l.raftLogs[0].K, nil
 	}
 	if l.Iterator(key) == -1 {
 		l.m.RUnlock()
 		return res, errors.New("there is no your key")
 	}
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left < right {
 		mid := (left + right) / 2
-		if l.logs[mid].K.Greater(key) {
+		if l.raftLogs[mid].K.Greater(key) {
 			right = mid
 		} else {
 			left = mid + 1
 		}
 	}
-	if l.logs[left].K.Greater(key) {
-		res = l.logs[left].K
+	if l.raftLogs[left].K.Greater(key) {
+		res = l.raftLogs[left].K
 	}
 	l.m.RUnlock()
 	return res, nil
@@ -160,14 +160,14 @@ func (l *RaftLogSet) GetVByK(key RaftKey) (string, error) { // 通过Key寻找�
 	var res string
 	err := errors.New("error: can not find this log by key")
 	l.m.RLock()
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left <= right {
 		mid := (left + right) / 2
-		if l.logs[mid].K.Equals(key) {
+		if l.raftLogs[mid].K.Equals(key) {
 			err = nil
-			res = l.logs[mid].V
+			res = l.raftLogs[mid].V
 			break
-		} else if l.logs[mid].K.Greater(key) {
+		} else if l.raftLogs[mid].K.Greater(key) {
 			right = mid - 1
 		} else {
 			left = mid + 1
@@ -181,16 +181,41 @@ func (l *RaftLogSet) GetVByK(key RaftKey) (string, error) { // 通过Key寻找�
 	}
 }
 
+func (l *RaftLogSet) GetLogByK(key RaftKey) (RaftLog, error) { // 通过Key寻找指定日志，找不到返回空
+	var res RaftLog
+	err := errors.New("error: can not find this log by key")
+	l.m.RLock()
+	left, right := 0, len(l.raftLogs)-1
+	for left <= right {
+		mid := (left + right) / 2
+		if l.raftLogs[mid].K.Equals(key) {
+			err = nil
+			res = l.raftLogs[mid]
+			break
+		} else if l.raftLogs[mid].K.Greater(key) {
+			right = mid - 1
+		} else {
+			left = mid + 1
+		}
+	}
+	l.m.RUnlock()
+	if err == nil {
+		return res, nil
+	} else {
+		return RaftLog{}, err
+	}
+}
+
 func (l *RaftLogSet) Exist(key RaftKey) bool {
 	exist := false
 	l.m.RLock()
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left <= right {
 		mid := (left + right) / 2
-		if l.logs[mid].K.Equals(key) {
+		if l.raftLogs[mid].K.Equals(key) {
 			exist = true
 			break
-		} else if l.logs[mid].K.Greater(key) {
+		} else if l.raftLogs[mid].K.Greater(key) {
 			right = mid - 1
 		} else {
 			left = mid + 1
@@ -203,17 +228,17 @@ func (l *RaftLogSet) Exist(key RaftKey) bool {
 func (l *RaftLogSet) Commit(key RaftKey) (previousCommitted RaftKey) { // 提交所有小于等于key的日志，幂等的提交日志
 	l.m.Lock()
 	previousCommitted = l.committedKey
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left < right {
 		mid := (left + right + 1) / 2
-		if l.logs[mid].K.Greater(key) {
+		if l.raftLogs[mid].K.Greater(key) {
 			right = mid - 1
 		} else {
 			left = mid
 		}
 	}
-	if !l.logs[left].K.Greater(key) && previousCommitted.Less(l.logs[left].K) {
-		l.committedKey = l.logs[left].K
+	if !l.raftLogs[left].K.Greater(key) && previousCommitted.Less(l.raftLogs[left].K) {
+		l.committedKey = l.raftLogs[left].K
 	}
 	l.m.Unlock()
 	return
@@ -223,42 +248,42 @@ func (l *RaftLogSet) Remove(key RaftKey) ([]RaftLog, error) { // 删除日志直
 	l.m.Lock()
 	var ret []RaftLog
 	err := errors.New("error: remove committed log")
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left < right {
 		mid := (left + right + 1) / 2
-		if l.logs[mid].K.Greater(key) {
+		if l.raftLogs[mid].K.Greater(key) {
 			right = mid - 1
 		} else {
 			left = mid
 		}
 	}
-	if !l.logs[left].K.Greater(key) {
-		if l.committedKey.Greater(l.logs[left].K) {
+	if !l.raftLogs[left].K.Greater(key) {
+		if l.committedKey.Greater(l.raftLogs[left].K) {
 			l.m.Unlock()
 			return ret, err
 		}
-		ret = make([]RaftLog, len(l.logs)-left-1)
-		copy(ret, l.logs[left+1:len(l.logs)])
-		l.logs = l.logs[0 : left+1]
+		ret = make([]RaftLog, len(l.raftLogs)-left-1)
+		copy(ret, l.raftLogs[left+1:len(l.raftLogs)])
+		l.raftLogs = l.raftLogs[0 : left+1]
 	} else {
 		if !l.committedKey.Equals(RaftKey{-1, -1}) {
 			l.m.Unlock()
 			return ret, err
 		}
-		ret = l.logs
-		l.logs = []RaftLog{}
+		ret = l.raftLogs
+		l.raftLogs = []RaftLog{}
 	}
 	l.m.Unlock()
 	return ret, nil
 }
 
 func (l *RaftLogSet) Iterator(key RaftKey) int { // 根据Key返回迭代器，没找到返回-1，线程不安全
-	left, right := 0, len(l.logs)-1
+	left, right := 0, len(l.raftLogs)-1
 	for left <= right {
 		mid := (left + right) / 2
-		if l.logs[mid].K.Equals(key) {
+		if l.raftLogs[mid].K.Equals(key) {
 			return mid
-		} else if l.logs[mid].K.Greater(key) {
+		} else if l.raftLogs[mid].K.Greater(key) {
 			right = mid - 1
 		} else {
 			left = mid + 1
@@ -275,7 +300,7 @@ func (l *RaftLogSet) GetLogsByRange(begin RaftKey, end RaftKey) []RaftLog { // �
 		return []RaftLog{}
 	} else {
 		tmp := make([]RaftLog, endIter-beginIter+1)
-		copy(tmp, l.logs[beginIter:endIter+1])
+		copy(tmp, l.raftLogs[beginIter:endIter+1])
 		l.m.RUnlock()
 		return tmp
 	}
@@ -290,7 +315,7 @@ func (l *RaftLogSet) GetKsByRange(begin RaftKey, end RaftKey) []RaftKey { // 返
 	} else {
 		tmp := make([]RaftKey, endIter-beginIter+1)
 		for i := beginIter; i <= endIter; i++ {
-			tmp[i-beginIter] = l.logs[i].K
+			tmp[i-beginIter] = l.raftLogs[i].K
 		}
 		l.m.RUnlock()
 		return tmp
@@ -298,12 +323,12 @@ func (l *RaftLogSet) GetKsByRange(begin RaftKey, end RaftKey) []RaftKey { // 返
 }
 
 func (l *RaftLogSet) GetAll() []RaftLog { // 线程不安全
-	return l.logs
+	return l.raftLogs
 }
 
 func (l *RaftLogSet) ToString() string {
 	l.m.RLock()
-	res := fmt.Sprintf("==== logs %d ====\ncontents: %v\ncommittedKey: %v\n==== logs ====", len(l.logs), l.logs, l.committedKey)
+	res := fmt.Sprintf("==== raftLogs %d ====\ncontents: %v\ncommittedKey: %v\n==== raftLogs ====", len(l.raftLogs), l.raftLogs, l.committedKey)
 	l.m.RUnlock()
 	return res
 }

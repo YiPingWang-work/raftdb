@@ -3,9 +3,9 @@ package logic
 import (
 	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/log_plus"
 	"encoding/json"
 	"errors"
-	"log"
 )
 
 var follower Follower
@@ -28,10 +28,10 @@ func (f *Follower) init(me *Me) error {
 
 func (f *Follower) processHeartbeat(msg *pipe.Message, me *Me) error {
 	me.timer.Reset(me.followerTimeout)
-	log.Printf("Follower: leader %d's heartbeat\n", msg.From)
+	log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: leader %d's heartbeat\n", msg.From)
 	if me.raftLogSet.GetLast().Less(msg.LastLogKey) {
-		log.Println("Follower: my raftLogSet are not complete")
-		return f.processAppendLog(msg, me)
+		log_plus.Println(log_plus.DEBUG_FOLLOWER, "Follower: my raftLogSet are not complete")
+		return f.processAppend(msg, me)
 	}
 	return nil
 }
@@ -46,9 +46,9 @@ func (f *Follower) processHeartbeat(msg *pipe.Message, me *Me) error {
 所有经过此函数发出的不同意的回复必须保证SecondLastLogKey小于发送过来的LastLogKey。
 */
 
-func (f *Follower) processAppendLog(msg *pipe.Message, me *Me) error {
+func (f *Follower) processAppend(msg *pipe.Message, me *Me) error {
 	reply := pipe.Message{
-		Type:       pipe.AppendLogReply,
+		Type:       pipe.AppendRaftLogReply,
 		From:       me.meta.Id,
 		To:         []int{msg.From},
 		Term:       me.meta.Term,
@@ -58,33 +58,43 @@ func (f *Follower) processAppendLog(msg *pipe.Message, me *Me) error {
 		return nil
 	}
 	if me.raftLogSet.GetLast().Greater(msg.SecondLastLogKey) {
-		if logs, err := me.raftLogSet.Remove(msg.SecondLastLogKey); err != nil {
+		if raftLogs, err := me.raftLogSet.Remove(msg.SecondLastLogKey); err != nil {
 			panic("remove committed log")
 		} else {
-			for _, v := range logs {
+			me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{
+				Type:   pipe.FileTruncate,
+				Agree:  false,
+				Others: raftLogs,
+			}}
+			for _, v := range raftLogs {
 				if id, has := me.mapKeyClient[v.K]; has {
 					me.syncFailedChan <- id
 					delete(me.mapKeyClient, v.K)
 				}
 			}
 		}
-		log.Printf("Follower: receive a less log %v from %d, remove raftLogSet until last log is %v\n",
+		log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: receive a less log %v from %d, remove raftLogSet until last log is %v\n",
 			msg.LastLogKey, msg.From, me.raftLogSet.GetLast())
 	}
-	if me.raftLogSet.GetLast().Equals(msg.SecondLastLogKey) && msg.Type == pipe.AppendLog {
+	if me.raftLogSet.GetLast().Equals(msg.SecondLastLogKey) && msg.Type == pipe.AppendRaftLog {
 		reply.Agree = true
-		me.raftLogSet.Append(raft_log.RaftLog{K: msg.LastLogKey, V: msg.Log})
-		log.Printf("Follower: accept %d's request %v\n", msg.From, msg.LastLogKey)
+		me.raftLogSet.Append(raft_log.RaftLog{K: msg.LastLogKey, V: msg.Content})
+		me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{
+			Type:       pipe.FileAppend,
+			Agree:      false,
+			LastLogKey: msg.LastLogKey,
+		}}
+		log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: accept %d's request %v\n", msg.From, msg.LastLogKey)
 	} else {
 		reply.Agree, reply.SecondLastLogKey = false, me.raftLogSet.GetLast()
-		log.Printf("Follower: refuse %d's request %v, my last log is %v\n", msg.From, msg.LastLogKey, me.raftLogSet.GetLast())
+		log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: refuse %d's request %v, my last log is %v\n", msg.From, msg.LastLogKey, me.raftLogSet.GetLast())
 	}
 	me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: reply}
 	me.timer.Reset(me.followerTimeout)
 	return nil
 }
 
-func (f *Follower) processAppendLogReply(*pipe.Message, *Me) error {
+func (f *Follower) processAppendReply(*pipe.Message, *Me) error {
 	return nil
 }
 
@@ -104,18 +114,12 @@ func (f *Follower) processCommit(msg *pipe.Message, me *Me) error {
 	if metaTmp, err := json.Marshal(*me.meta); err != nil {
 		return err
 	} else {
-		me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Log: string(metaTmp)}}
+		me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Content: string(metaTmp)}}
 	}
-	k, _ := me.raftLogSet.GetNext(previousCommitted)
-	me.toBottomChan <- pipe.Order{
-		Type: pipe.Store,
-		Msg: pipe.Message{
-			Agree:            false,
-			LastLogKey:       me.raftLogSet.GetCommitted(),
-			SecondLastLogKey: k,
-		}}
+	from, _ := me.raftLogSet.GetNext(previousCommitted)
+	to := me.raftLogSet.GetCommitted()
 	me.timer.Reset(me.followerTimeout)
-	for _, v := range me.raftLogSet.GetLogsByRange(k, me.raftLogSet.GetCommitted()) {
+	for _, v := range me.raftLogSet.GetLogsByRange(from, to) {
 		if id, has := me.mapKeyClient[v.K]; has {
 			me.toCrownChan <- pipe.Something{ClientId: id, NeedReply: true, Content: v.V}
 			delete(me.mapKeyClient, v.K)
@@ -123,8 +127,8 @@ func (f *Follower) processCommit(msg *pipe.Message, me *Me) error {
 			me.toCrownChan <- pipe.Something{NeedReply: false, Content: v.V}
 		}
 	}
-	log.Printf("Follower: commit raftLogSet whose key from %v to %v\n",
-		k, me.raftLogSet.GetCommitted())
+	log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: commit raftLogSet whose key from %v to %v\n",
+		from, to)
 	return nil
 }
 
@@ -141,12 +145,12 @@ func (f *Follower) processVote(msg *pipe.Message, me *Me) error {
 	}
 	if f.voted != -1 && f.voted != msg.From || me.raftLogSet.GetLast().Greater(msg.LastLogKey) {
 		reply.Agree, reply.SecondLastLogKey = false, me.raftLogSet.GetLast()
-		log.Printf("Follower: refuse %d's vote, because vote: %d, myLastKey: %v, yourLastKey: %v\n",
+		log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: refuse %d's vote, because vote: %d, myLastKey: %v, yourLastKey: %v\n",
 			msg.From, f.voted, reply.SecondLastLogKey, msg.LastLogKey)
 	} else {
 		f.voted = msg.From
 		reply.Agree = true
-		log.Printf("Follower: agreeMap %d's vote\n", msg.From)
+		log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: agreeMap %d's vote\n", msg.From)
 	}
 	me.toBottomChan <- pipe.Order{
 		Type: pipe.NodeReply,
@@ -174,11 +178,11 @@ func (f *Follower) processPreVoteReply(*pipe.Message, *Me) error {
 }
 
 func (f *Follower) processFromClient(msg *pipe.Message, me *Me) error {
-	log.Printf("Follower: a msg from client: %v\n", msg)
+	log_plus.Printf(log_plus.DEBUG_FOLLOWER, "Follower: a msg from client: %v\n", msg)
 	if msg.Agree {
 		return errors.New("warning: follower refuses to sync")
 	}
-	me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Log}
+	me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Content}
 	return nil
 }
 
@@ -187,7 +191,7 @@ func (f *Follower) processClientSync(*pipe.Message, *Me) error {
 }
 
 func (f *Follower) processTimeout(me *Me) error {
-	log.Println("Follower: timeout")
+	log_plus.Println(log_plus.DEBUG_FOLLOWER, "Follower: timeout")
 	return me.switchToCandidate()
 }
 

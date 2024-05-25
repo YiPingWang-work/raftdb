@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func Monitor(me *logic.Me, logs *raft_log.RaftLogSet, bottom *bottom.Bottom, crown *crown.Crown) { // 禁止修改参数
+func Monitor(me *logic.Me, raftLogSet *raft_log.RaftLogSet, bottom *bottom.Bottom, crown *crown.Crown) { // 禁止修改参数
 	for {
 		var x string
 		fmt.Scanln(&x)
@@ -18,7 +18,7 @@ func Monitor(me *logic.Me, logs *raft_log.RaftLogSet, bottom *bottom.Bottom, cro
 			fmt.Println(me.ToString())
 			continue
 		} else if x == "log" {
-			fmt.Println(logs.ToString())
+			fmt.Println(raftLogSet.ToString())
 			continue
 		} else if x == "app" {
 			fmt.Println(crown.ToString())

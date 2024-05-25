@@ -2,10 +2,10 @@ package logic
 
 import (
 	"RaftDB/kernel/pipe"
+	"RaftDB/log_plus"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math/rand"
 	"time"
 )
@@ -31,7 +31,7 @@ func (c *Candidate) processHeartbeat(msg *pipe.Message, me *Me) error {
 	return me.switchToFollower(msg.Term, true, msg)
 }
 
-func (c *Candidate) processAppendLog(msg *pipe.Message, me *Me) error {
+func (c *Candidate) processAppend(msg *pipe.Message, me *Me) error {
 	return me.switchToFollower(msg.Term, true, msg)
 }
 
@@ -39,7 +39,7 @@ func (c *Candidate) processCommit(msg *pipe.Message, me *Me) error {
 	return me.switchToFollower(msg.Term, true, msg)
 }
 
-func (c *Candidate) processAppendLogReply(*pipe.Message, *Me) error {
+func (c *Candidate) processAppendReply(*pipe.Message, *Me) error {
 	return nil
 }
 
@@ -55,7 +55,7 @@ func (c *Candidate) processVote(msg *pipe.Message, me *Me) error {
 		Term:  me.meta.Term,
 		Agree: false,
 	}}
-	log.Printf("Candidate: refuse %d's vote\n", msg.From)
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: refuse %d's vote\n", msg.From)
 	return nil
 }
 
@@ -64,7 +64,7 @@ func (c *Candidate) processVote(msg *pipe.Message, me *Me) error {
 */
 
 func (c *Candidate) processVoteReply(msg *pipe.Message, me *Me) error {
-	log.Printf("Candidate: %d agree my vote: %v\n", msg.From, msg.Agree)
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: %d agree my vote: %v\n", msg.From, msg.Agree)
 	agreeNum := 0
 	disagreeNum := 0
 	c.agree[msg.From] = msg.Agree
@@ -106,7 +106,7 @@ func (c *Candidate) processPreVoteReply(msg *pipe.Message, me *Me) error {
 		if len(c.agree) >= me.quorum {
 			c.agree = map[int]bool{}
 			c.state = 1
-			log.Println("Candidate: begin vote after a random time")
+			log_plus.Println(log_plus.DEBUG_CANDIDATE, "Candidate: begin vote after a random time")
 			me.timer.Reset(time.Duration(rand.Intn(100)) * time.Millisecond)
 		}
 	}
@@ -114,11 +114,11 @@ func (c *Candidate) processPreVoteReply(msg *pipe.Message, me *Me) error {
 }
 
 func (c *Candidate) processFromClient(msg *pipe.Message, me *Me) error {
-	log.Printf("Candidate: a msg from client: %v\n", msg)
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: a msg from client: %v\n", msg)
 	if msg.Agree {
 		return errors.New("warning: candidate refuses to sync")
 	}
-	me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Log}
+	me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Content}
 	return nil
 }
 
@@ -134,7 +134,7 @@ func (c *Candidate) processClientSync(*pipe.Message, *Me) error {
 */
 
 func (c *Candidate) processTimeout(me *Me) error {
-	log.Printf("Candidate: timeout, state: %v\n", c.state)
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: timeout, state: %v\n", c.state)
 	reply := pipe.Message{
 		From:       me.meta.Id,
 		To:         me.members,
@@ -148,10 +148,10 @@ func (c *Candidate) processTimeout(me *Me) error {
 		if metaTmp, err := json.Marshal(*me.meta); err != nil {
 			return err
 		} else {
-			me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Log: string(metaTmp)}}
+			me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Content: string(metaTmp)}}
 		}
 		reply.Type = pipe.Vote
-		log.Printf("Candidate: voting ... , my term is %d\n", me.meta.Term)
+		log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: voting ... , my term is %d\n", me.meta.Term)
 	} else {
 		c.state = 0
 		reply.Type = pipe.PreVote
