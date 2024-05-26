@@ -1,6 +1,6 @@
 package pipe
 
-type Something struct {
+type CrownMessage struct {
 	ClientId  int    // 客户端ID，crown禁止修改
 	NeedReply bool   // 是否需要回复，crown禁止修改
 	Agree     bool   // 是否执行成功，crown必须修改

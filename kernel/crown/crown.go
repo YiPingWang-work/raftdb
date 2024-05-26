@@ -1,8 +1,8 @@
 package crown
 
 import (
-	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/kernel/types/pipe"
 	"RaftDB/log_plus"
 )
 
@@ -13,8 +13,8 @@ import (
 
 type Crown struct {
 	app           App
-	toLogicChan   chan<- pipe.Something               // 上层接口
-	fromLogicChan <-chan pipe.Something               // 上层接口
+	toLogicChan   chan<- pipe.CrownMessage            // 上层接口
+	fromLogicChan <-chan pipe.CrownMessage            // 上层接口
 	watchingMap   map[string][]int                    // 存储监听的事件
 	watchTrigger  func(string) (bool, string, string) // 监听触发函数，对于一个命令，他可能触发的key是什么，以及返回什么
 }
@@ -36,7 +36,7 @@ crown初始化，保存获取Logic层和crown层的通讯管道，初始化APP�
 */
 
 func (c *Crown) Init(raftLogSet *raft_log.RaftLogSet, app App,
-	fromLogicChan <-chan pipe.Something, toLogicChan chan<- pipe.Something) {
+	fromLogicChan <-chan pipe.CrownMessage, toLogicChan chan<- pipe.CrownMessage) {
 
 	c.toLogicChan, c.fromLogicChan = toLogicChan, fromLogicChan
 	c.app, c.watchingMap = app, map[string][]int{}
@@ -62,21 +62,21 @@ func (c *Crown) Run() {
 			}
 			if maybe, key, reply := c.watchTrigger(sth.Content); maybe && c.watchingMap[key] != nil {
 				for _, v := range c.watchingMap[key] {
-					c.toLogicChan <- pipe.Something{ClientId: v, Agree: true, Content: reply}
+					c.toLogicChan <- pipe.CrownMessage{ClientId: v, Agree: true, Content: reply}
 					log_plus.Printf(log_plus.DEBUG_CROWN, "crown: %d's watching event '%s' has been triggered\n", v, key)
 				}
 				delete(c.watchingMap, key)
 			}
 			if len(sth.Content) > 0 && sth.Content[0] == '!' {
 				if out, agree, err := c.app.UndoProcess(sth.Content); err != nil {
-					log_plus.Println(log_plus.DEBUG_CROWN, err)
+					log_plus.Println(log_plus.DEBUG_CROWN, "ERROR", err)
 				} else if sth.NeedReply {
 					sth.Content, sth.Agree = out, agree
 					c.toLogicChan <- sth
 				}
 			} else {
 				if out, agree, watching, err := c.app.Process(sth.Content); err != nil {
-					log_plus.Println(log_plus.DEBUG_CROWN, err)
+					log_plus.Println(log_plus.DEBUG_CROWN, "ERROR", err)
 				} else {
 					if watching {
 						c.watchingMap[out] = append(c.watchingMap[out], sth.ClientId)

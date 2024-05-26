@@ -227,6 +227,10 @@ func (l *RaftLogSet) Exist(key RaftKey) bool {
 
 func (l *RaftLogSet) Commit(key RaftKey) (previousCommitted RaftKey) { // 提交所有小于等于key的日志，幂等的提交日志
 	l.m.Lock()
+	if len(l.raftLogs) == 0 {
+		l.m.Unlock()
+		return RaftKey{-1, -1}
+	}
 	previousCommitted = l.committedKey
 	left, right := 0, len(l.raftLogs)-1
 	for left < right {
@@ -246,6 +250,10 @@ func (l *RaftLogSet) Commit(key RaftKey) (previousCommitted RaftKey) { // 提交
 
 func (l *RaftLogSet) Remove(key RaftKey) ([]RaftLog, error) { // 删除日志直到自己的日志Key不大于key
 	l.m.Lock()
+	if len(l.raftLogs) == 0 {
+		l.m.Unlock()
+		return []RaftLog{}, nil
+	}
 	var ret []RaftLog
 	err := errors.New("error: remove committed log")
 	left, right := 0, len(l.raftLogs)-1
@@ -278,6 +286,9 @@ func (l *RaftLogSet) Remove(key RaftKey) ([]RaftLog, error) { // 删除日志直
 }
 
 func (l *RaftLogSet) Iterator(key RaftKey) int { // 根据Key返回迭代器，没找到返回-1，线程不安全
+	if len(l.raftLogs) == 0 {
+		return -1
+	}
 	left, right := 0, len(l.raftLogs)-1
 	for left <= right {
 		mid := (left + right) / 2

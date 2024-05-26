@@ -1,9 +1,9 @@
 package bottom
 
 import (
-	"RaftDB/kernel/meta"
-	"RaftDB/kernel/pipe"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/kernel/types/meta"
+	"RaftDB/kernel/types/pipe"
 	"RaftDB/log_plus"
 )
 
@@ -11,8 +11,8 @@ type Bottom struct {
 	communicate   Communicate
 	store         Store
 	raftLogSet    *raft_log.RaftLogSet
-	fromLogicChan <-chan pipe.Order // 接收me消息的管道
-	toLogicChan   chan<- pipe.Order // 发送消息给me的管道
+	fromLogicChan <-chan pipe.BottomMessage // 接收me消息的管道
+	toLogicChan   chan<- pipe.BottomMessage // 发送消息给me的管道
 }
 
 /*
@@ -25,7 +25,7 @@ bottom初始化，它需要完成：
 */
 
 func (b *Bottom) Init(confPath string, filePath string, meta *meta.Meta, raftLogSet *raft_log.RaftLogSet,
-	medium Medium, cable Cable, fromLogicChan <-chan pipe.Order, toLogicChan chan<- pipe.Order,
+	medium Medium, cable Cable, fromLogicChan <-chan pipe.BottomMessage, toLogicChan chan<- pipe.BottomMessage,
 	mediumParam interface{}, cableParam interface{}) {
 
 	b.store, b.raftLogSet = Store{}, raftLogSet
@@ -55,38 +55,39 @@ func (b *Bottom) Run() {
 	}()
 	for {
 		select {
-		case order, opened := <-b.fromLogicChan:
+		case msg, opened := <-b.fromLogicChan:
 			if !opened {
 				panic("logic chan is closed")
 				return
 			}
-			if order.Type == pipe.Store {
-				if order.Msg.Agree {
-					if err := b.store.updateMeta(order.Msg.Content); err != nil {
-						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+			if msg.Type == pipe.Store {
+				if msg.Body.Agree {
+					if err := b.store.updateMeta(msg.Body.Content); err != nil {
+						log_plus.Println(log_plus.DEBUG_BOTTOM, "ERROR", err)
 					}
 					log_plus.Println(log_plus.DEBUG_BOTTOM, "bottom: update meta")
-				} else if order.Msg.Type == pipe.FileAppend {
-					raftLog, _ := b.raftLogSet.GetLogByK(order.Msg.LastLogKey)
+				} else if msg.Body.Type == pipe.FileAppend {
+					raftLog, _ := b.raftLogSet.GetLogByK(msg.Body.LastLogKey)
 					if err := b.store.appendLog(raftLog); err != nil {
-						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+						log_plus.Println(log_plus.DEBUG_BOTTOM, "ERROR", err)
 					}
-					log_plus.Printf(log_plus.DEBUG_BOTTOM, "bottom: write log from %d to %d\n", order.Msg.SecondLastLogKey, order.Msg.LastLogKey)
-				} else if order.Msg.Type == pipe.FileTruncate {
-					raftLogs, _ := order.Msg.Others.([]raft_log.RaftLog)
+					log_plus.Printf(log_plus.DEBUG_BOTTOM, "bottom: write log %v\n", msg.Body.LastLogKey)
+				} else if msg.Body.Type == pipe.FileTruncate {
+					raftLogs, _ := msg.Body.Others.([]raft_log.RaftLog)
 					if err := b.store.truncateLog(raftLogs); err != nil {
-						log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+						log_plus.Println(log_plus.DEBUG_BOTTOM, "ERROR", err)
 					}
+					log_plus.Printf(log_plus.DEBUG_BOTTOM, "bottom: truncate log %v\n", raftLogs)
 				}
 			}
-			if order.Type == pipe.NodeReply {
-				if err := b.communicate.replyNode(order.Msg); err != nil {
-					log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+			if msg.Type == pipe.NodeReply {
+				if err := b.communicate.replyNode(msg.Body); err != nil {
+					log_plus.Println(log_plus.DEBUG_BOTTOM, "ERROR", err)
 				}
 			}
-			if order.Type == pipe.ClientReply {
-				if err := b.communicate.ReplyClient(order.Msg); err != nil {
-					log_plus.Println(log_plus.DEBUG_BOTTOM, err)
+			if msg.Type == pipe.ClientReply {
+				if err := b.communicate.ReplyClient(msg.Body); err != nil {
+					log_plus.Println(log_plus.DEBUG_BOTTOM, "ERROR", err)
 				}
 			}
 		}

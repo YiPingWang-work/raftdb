@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	NodeReply OrderType = iota
+	NodeReply MessageType = iota
 	Store
 	FromNode
 	FromClient
@@ -14,16 +14,16 @@ const (
 	NIL
 )
 
-type Order struct {
-	Type OrderType // 命令种类
-	Msg  Message   //消息正文
+type BottomMessage struct {
+	Type MessageType // 命令种类
+	Body MessageBody //消息正文
 }
 
-type MsgType int
+type BodyType int
 
-type OrderType int
+type MessageType int
 
-var orderTypes []string = []string{
+var messageTypes []string = []string{
 	"NodeReply",
 	"store",
 	"FromNode",
@@ -32,7 +32,7 @@ var orderTypes []string = []string{
 }
 
 const (
-	Heartbeat MsgType = iota
+	Heartbeat BodyType = iota
 	AppendRaftLog
 	Commit
 	AppendRaftLogReply
@@ -57,8 +57,8 @@ var msgTypes []string = []string{
 	"FileTruncate",
 }
 
-type Message struct {
-	Type             MsgType          `json:"type"`                // 消息类型
+type MessageBody struct {
+	Type             BodyType         `json:"type"`                // 消息类型
 	From             int              `json:"from"`                // 消息来源
 	To               []int            `json:"to"`                  // 消息去向
 	Term             int              `json:"term"`                // 消息发送方的任期/客户端设置的超时微秒数
@@ -69,15 +69,15 @@ type Message struct {
 	Others           interface{}      `json:"-"`                   // 其它
 }
 
-func (o *Order) ToString() string {
-	return fmt.Sprintf("{\n OrderType: %s\n Message:{\n"+
+func (o *BottomMessage) ToString() string {
+	return fmt.Sprintf("{\n MessageType: %s\n MessageBody:{\n"+
 		"  Type: %s\n  From: %d\n  To: %v\n  Term: %d\n  Agree: %v\n  LastLogKey: %v\n  SecondLastLogKey: %v\n  V: %s\n }\n"+
 		"}",
-		orderTypes[o.Type], msgTypes[o.Msg.Type], o.Msg.From, o.Msg.To, o.Msg.Term,
-		o.Msg.Agree, o.Msg.LastLogKey, o.Msg.SecondLastLogKey, o.Msg.Content)
+		messageTypes[o.Type], msgTypes[o.Body.Type], o.Body.From, o.Body.To, o.Body.Term,
+		o.Body.Agree, o.Body.LastLogKey, o.Body.SecondLastLogKey, o.Body.Content)
 }
 
-func (m *Message) ToString() string {
+func (m *MessageBody) ToString() string {
 	return fmt.Sprintf("{\n Type: %s\n From: %d\n To: %v\n Term: %d\n Agree: %v\n LastLogKey: %v\n SecondLastLogKey: %v\n V: %s\n}",
 		msgTypes[m.Type], m.From, m.To, m.Term, m.Agree, m.LastLogKey, m.SecondLastLogKey, m.Content)
 }

@@ -1,8 +1,8 @@
 package bottom
 
 import (
-	"RaftDB/kernel/meta"
 	"RaftDB/kernel/raft_log"
+	"RaftDB/kernel/types/meta"
 	"encoding/json"
 	"strings"
 )

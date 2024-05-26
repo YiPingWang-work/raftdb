@@ -23,6 +23,11 @@ func Monitor(me *logic.Me, raftLogSet *raft_log.RaftLogSet, bottom *bottom.Botto
 		} else if x == "app" {
 			fmt.Println(crown.ToString())
 			continue
+		} else if x == "delay" {
+			bottom.ChangeNetworkDelay(10000, true)
+			crown.ChangeProcessDelay(5000, true)
+			fmt.Println("all delay changed")
+			continue
 		} else {
 			tmp := strings.Split(x, ",")
 			if len(tmp) == 3 && tmp[0] == "netdelay" {

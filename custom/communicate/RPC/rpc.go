@@ -1,7 +1,7 @@
 package RPC
 
 import (
-	"RaftDB/kernel/pipe"
+	"RaftDB/kernel/types/pipe"
 	"RaftDB/log_plus"
 	"errors"
 	"math/rand"
@@ -19,9 +19,9 @@ import (
 /*
 	type Cable interface {
 		Init(cableParam interface{}) error
-		ReplyNode(addr string, msg interface{}) error
+		ReplyNode(addr string, body interface{}) error
 		Listen(addr string) error
-		ReplyClient(msg interface{}) error
+		ReplyClient(body interface{}) error
 		ChangeNetworkDelay(delay int, random bool)
 	}
 */
@@ -31,7 +31,7 @@ import (
 
 type RPC struct {
 	clientChans     sync.Map
-	replyChan       chan<- pipe.Order
+	replyChan       chan<- pipe.BottomMessage
 	delay           int
 	random          bool
 	num             atomic.Int32
@@ -39,7 +39,7 @@ type RPC struct {
 }
 
 func (r *RPC) Init(replyChan interface{}, alwaysIp []string) error {
-	if x, ok := replyChan.(chan pipe.Order); !ok {
+	if x, ok := replyChan.(chan pipe.BottomMessage); !ok {
 		return errors.New("RPC: Init need a reply chan")
 	} else {
 		r.replyChan = x
@@ -66,9 +66,9 @@ func (r *RPC) Init(replyChan interface{}, alwaysIp []string) error {
 	return nil
 }
 
-func (r *RPC) ReplyNode_old_version(addr string, msg interface{}) error {
-	if x, ok := msg.(pipe.Message); !ok {
-		return errors.New("RPC: ReplyNode need a order.Message")
+func (r *RPC) ReplyNode_old_version(addr string, body interface{}) error {
+	if x, ok := body.(pipe.MessageBody); !ok {
+		return errors.New("RPC: ReplyNode need a pipe.MessageBody")
 	} else {
 		client, err := rpc.Dial("tcp", addr)
 		if err != nil {
@@ -85,9 +85,9 @@ func (r *RPC) ReplyNode_old_version(addr string, msg interface{}) error {
 	return nil
 }
 
-func (r *RPC) ReplyNode(addr string, msg interface{}) error {
-	if x, ok := msg.(pipe.Message); !ok {
-		return errors.New("RPC: ReplyNode need a order.Message")
+func (r *RPC) ReplyNode(addr string, body interface{}) error {
+	if x, ok := body.(pipe.MessageBody); !ok {
+		return errors.New("RPC: ReplyNode need a pipe.MessageBody")
 	} else {
 		if pool, has := r.alwaysConnPools[addr]; has {
 			if client, ok := pool.Get().(*rpc.Client); !ok {
@@ -116,7 +116,7 @@ func (r *RPC) Listen(addr string) error {
 	defer listener.Close()
 	for {
 		if conn, err := listener.Accept(); err != nil {
-			log_plus.Println(log_plus.DEBUG_COMMUNICATE, err)
+			log_plus.Println(log_plus.DEBUG_COMMUNICATE, "ERROR", err)
 		} else {
 			go rpc.ServeConn(conn)
 		}
@@ -128,14 +128,14 @@ func (r *RPC) ChangeNetworkDelay(delay int, random bool) {
 	r.random = random
 }
 
-func (r *RPC) ReplyClient(msg interface{}) error {
-	if x, ok := msg.(pipe.Message); !ok {
-		return errors.New("RPC: ReplyClient need a order.Message")
+func (r *RPC) ReplyClient(body interface{}) error {
+	if x, ok := body.(pipe.MessageBody); !ok {
+		return errors.New("RPC: ReplyClient need a pipe.MessageBody")
 	} else {
 		ch, ok := r.clientChans.Load(x.From)
 		if ok {
 			select {
-			case ch.(chan pipe.Message) <- x:
+			case ch.(chan pipe.MessageBody) <- x:
 			default:
 			}
 		}
@@ -143,23 +143,23 @@ func (r *RPC) ReplyClient(msg interface{}) error {
 	return nil
 }
 
-func (r *RPC) Push(rec pipe.Message, _ *string) error {
+func (r *RPC) Push(rec pipe.MessageBody, _ *string) error {
 	if r.disturb() {
 		return nil
 	}
-	r.replyChan <- pipe.Order{Type: pipe.FromNode, Msg: rec}
+	r.replyChan <- pipe.BottomMessage{Type: pipe.FromNode, Body: rec}
 	return nil
 }
 
-func (r *RPC) Write(rec pipe.Message, rep *string) error {
+func (r *RPC) Write(rec pipe.MessageBody, rep *string) error {
 	rec.From = int(r.num.Add(1))
-	ch := make(chan pipe.Message, 1)
+	ch := make(chan pipe.MessageBody, 1)
 	r.clientChans.Store(rec.From, ch)
-	r.replyChan <- pipe.Order{Type: pipe.FromClient, Msg: rec}
+	r.replyChan <- pipe.BottomMessage{Type: pipe.FromClient, Body: rec}
 	timer := time.After(time.Duration(rec.Term) * time.Millisecond)
 	select {
-	case msg := <-ch:
-		*rep = msg.Content
+	case body := <-ch:
+		*rep = body.Content
 	case <-timer:
 		*rep = "timeout"
 	}

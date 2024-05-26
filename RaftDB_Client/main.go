@@ -1,8 +1,8 @@
 package main
 
 import (
-	"RaftDB_Client/DB/KVDB"
-	"RaftDB_Client/Msg"
+	"RaftDB/RaftDB_Client/db/kvdb_client"
+	"RaftDB/kernel/types/pipe"
 	"bufio"
 	"fmt"
 	"net/rpc"
@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	db := KVDB.KVDBClient{}
+	db := kvdb_client.KVDBClient{}
 	if len(os.Args) != 2 {
 		fmt.Println("input server's addr like [ip]:[host]")
 		return
@@ -28,7 +28,7 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		req := Msg.Msg{Content: Msg.LogType(content), Term: 50000000, Agree: content[1] == 'r'}
+		req := pipe.MessageBody{Content: content, Term: 40000, Agree: content[1] == 'r'}
 		rep := ""
 		if err := client.Call("RPC.Write", req, &rep); err != nil {
 			fmt.Println(err)

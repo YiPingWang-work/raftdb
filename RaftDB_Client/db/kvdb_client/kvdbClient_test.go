@@ -1,4 +1,4 @@
-package KVDB
+package kvdb_client
 
 import (
 	"fmt"

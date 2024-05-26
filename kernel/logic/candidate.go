@@ -1,7 +1,7 @@
 package logic
 
 import (
-	"RaftDB/kernel/pipe"
+	"RaftDB/kernel/types/pipe"
 	"RaftDB/log_plus"
 	"encoding/json"
 	"errors"
@@ -27,19 +27,19 @@ func (c *Candidate) init(me *Me) error {
 在收到同级心跳等leader发出的请求时，说明集群中还有leader存在，立即转变成follower后再处理这些请求。
 */
 
-func (c *Candidate) processHeartbeat(msg *pipe.Message, me *Me) error {
-	return me.switchToFollower(msg.Term, true, msg)
+func (c *Candidate) processHeartbeat(body *pipe.MessageBody, me *Me) error {
+	return me.switchToFollower(body.Term, true, body)
 }
 
-func (c *Candidate) processAppend(msg *pipe.Message, me *Me) error {
-	return me.switchToFollower(msg.Term, true, msg)
+func (c *Candidate) processAppend(body *pipe.MessageBody, me *Me) error {
+	return me.switchToFollower(body.Term, true, body)
 }
 
-func (c *Candidate) processCommit(msg *pipe.Message, me *Me) error {
-	return me.switchToFollower(msg.Term, true, msg)
+func (c *Candidate) processCommit(body *pipe.MessageBody, me *Me) error {
+	return me.switchToFollower(body.Term, true, body)
 }
 
-func (c *Candidate) processAppendReply(*pipe.Message, *Me) error {
+func (c *Candidate) processAppendReply(*pipe.MessageBody, *Me) error {
 	return nil
 }
 
@@ -47,15 +47,15 @@ func (c *Candidate) processAppendReply(*pipe.Message, *Me) error {
 选举期间的candidate不会给同级的candidate选票
 */
 
-func (c *Candidate) processVote(msg *pipe.Message, me *Me) error {
-	me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: pipe.Message{
+func (c *Candidate) processVote(body *pipe.MessageBody, me *Me) error {
+	me.toBottomChan <- pipe.BottomMessage{Type: pipe.NodeReply, Body: pipe.MessageBody{
 		Type:  pipe.VoteReply,
 		From:  me.meta.Id,
-		To:    []int{msg.From},
+		To:    []int{body.From},
 		Term:  me.meta.Term,
 		Agree: false,
 	}}
-	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: refuse %d's vote\n", msg.From)
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: refuse %d's vote\n", body.From)
 	return nil
 }
 
@@ -63,11 +63,11 @@ func (c *Candidate) processVote(msg *pipe.Message, me *Me) error {
 如果选票同意人数达到quorum，则candidate晋升为leader，如果反对人数达到quorum，则candidate降级为follower。
 */
 
-func (c *Candidate) processVoteReply(msg *pipe.Message, me *Me) error {
-	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: %d agree my vote: %v\n", msg.From, msg.Agree)
+func (c *Candidate) processVoteReply(body *pipe.MessageBody, me *Me) error {
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: %d agree my vote: %v\n", body.From, body.Agree)
 	agreeNum := 0
 	disagreeNum := 0
-	c.agree[msg.From] = msg.Agree
+	c.agree[body.From] = body.Agree
 	if len(c.agree) >= me.quorum { // 统计同意的人数
 		for _, v := range c.agree {
 			if v {
@@ -79,17 +79,17 @@ func (c *Candidate) processVoteReply(msg *pipe.Message, me *Me) error {
 		if agreeNum >= me.quorum {
 			return me.switchToLeader()
 		} else if disagreeNum >= me.quorum {
-			return me.switchToFollower(msg.Term, true, msg)
+			return me.switchToFollower(body.Term, true, body)
 		}
 	}
 	return nil
 }
 
-func (c *Candidate) processPreVote(msg *pipe.Message, me *Me) error {
-	me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: pipe.Message{
+func (c *Candidate) processPreVote(body *pipe.MessageBody, me *Me) error {
+	me.toBottomChan <- pipe.BottomMessage{Type: pipe.NodeReply, Body: pipe.MessageBody{
 		Type: pipe.PreVoteReply,
 		From: me.meta.Id,
-		To:   []int{msg.From},
+		To:   []int{body.From},
 		Term: me.meta.Term,
 	}}
 	return nil
@@ -100,9 +100,9 @@ func (c *Candidate) processPreVote(msg *pipe.Message, me *Me) error {
 随机一段时间后开始选举。
 */
 
-func (c *Candidate) processPreVoteReply(msg *pipe.Message, me *Me) error {
+func (c *Candidate) processPreVoteReply(body *pipe.MessageBody, me *Me) error {
 	if c.state == 0 {
-		c.agree[msg.From] = true
+		c.agree[body.From] = true
 		if len(c.agree) >= me.quorum {
 			c.agree = map[int]bool{}
 			c.state = 1
@@ -113,16 +113,16 @@ func (c *Candidate) processPreVoteReply(msg *pipe.Message, me *Me) error {
 	return nil
 }
 
-func (c *Candidate) processFromClient(msg *pipe.Message, me *Me) error {
-	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: a msg from client: %v\n", msg)
-	if msg.Agree {
+func (c *Candidate) processFromClient(body *pipe.MessageBody, me *Me) error {
+	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: a body from client: %v\n", body)
+	if body.Agree {
 		return errors.New("warning: candidate refuses to sync")
 	}
-	me.toCrownChan <- pipe.Something{ClientId: msg.From, NeedReply: true, Content: msg.Content}
+	me.toCrownChan <- pipe.CrownMessage{ClientId: body.From, NeedReply: true, Content: body.Content}
 	return nil
 }
 
-func (c *Candidate) processClientSync(*pipe.Message, *Me) error {
+func (c *Candidate) processClientSync(*pipe.MessageBody, *Me) error {
 	return errors.New("warning: candidate can not do sync")
 }
 
@@ -135,7 +135,7 @@ func (c *Candidate) processClientSync(*pipe.Message, *Me) error {
 
 func (c *Candidate) processTimeout(me *Me) error {
 	log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: timeout, state: %v\n", c.state)
-	reply := pipe.Message{
+	reply := pipe.MessageBody{
 		From:       me.meta.Id,
 		To:         me.members,
 		LastLogKey: me.raftLogSet.GetLast(),
@@ -148,7 +148,7 @@ func (c *Candidate) processTimeout(me *Me) error {
 		if metaTmp, err := json.Marshal(*me.meta); err != nil {
 			return err
 		} else {
-			me.toBottomChan <- pipe.Order{Type: pipe.Store, Msg: pipe.Message{Agree: true, Content: string(metaTmp)}}
+			me.toBottomChan <- pipe.BottomMessage{Type: pipe.Store, Body: pipe.MessageBody{Agree: true, Content: string(metaTmp)}}
 		}
 		reply.Type = pipe.Vote
 		log_plus.Printf(log_plus.DEBUG_CANDIDATE, "Candidate: voting ... , my term is %d\n", me.meta.Term)
@@ -157,16 +157,16 @@ func (c *Candidate) processTimeout(me *Me) error {
 		reply.Type = pipe.PreVote
 	}
 	reply.Term = me.meta.Term
-	me.toBottomChan <- pipe.Order{Type: pipe.NodeReply, Msg: reply}
+	me.toBottomChan <- pipe.BottomMessage{Type: pipe.NodeReply, Body: reply}
 	me.timer.Reset(me.candidatePreVoteTimeout)
 	return nil
 }
 
-func (c *Candidate) processExpansion(*pipe.Message, *Me) error {
+func (c *Candidate) processExpansion(*pipe.MessageBody, *Me) error {
 	return nil
 }
 
-func (c *Candidate) processExpansionReply(*pipe.Message, *Me) error {
+func (c *Candidate) processExpansionReply(*pipe.MessageBody, *Me) error {
 	return nil
 }
 

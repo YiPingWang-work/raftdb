@@ -1,8 +1,8 @@
 package main
 
 import (
-	"RaftDB_Client/DB/KVDB"
-	"RaftDB_Client/Msg"
+	"RaftDB/RaftDB_Client/db/kvdb_client"
+	"RaftDB/kernel/types/pipe"
 	"fmt"
 	"log"
 	"net/rpc"
@@ -11,8 +11,8 @@ import (
 )
 
 func Test(t *testing.T) {
-	db := KVDB.KVDBClient{}
-	addr := "localhost:18001"
+	db := kvdb_client.KVDBClient{}
+	addr := "localhost:18002"
 	pool := sync.Pool{New: func() interface{} {
 		client, err := rpc.Dial("tcp", addr)
 		if err != nil {
@@ -21,7 +21,7 @@ func Test(t *testing.T) {
 			return client
 		}
 	}}
-	for i := 420; i < 821; i++ {
+	for i := 11020; i < 11121; i++ {
 		i := i
 		//go func() {
 		content, _ := db.Parser(fmt.Sprintf("write %d %d", i, i+1))
@@ -30,7 +30,7 @@ func Test(t *testing.T) {
 			log.Println("fuck")
 			break
 		}
-		req := Msg.Msg{Content: Msg.LogType(content), Term: 40000, Agree: content[1] == 'r'}
+		req := pipe.MessageBody{Content: content, Term: 35000, Agree: content[1] == 'r'}
 		rep := ""
 		if err := client.Call("RPC.Write", req, &rep); err != nil {
 			fmt.Println(err)

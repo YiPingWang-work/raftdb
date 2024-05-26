@@ -1,7 +1,7 @@
 package bottom
 
 import (
-	"RaftDB/kernel/pipe"
+	"RaftDB/kernel/types/pipe"
 )
 
 type Communicate struct {
@@ -16,9 +16,9 @@ type Communicate struct {
 
 type Cable interface {
 	Init(cableParam interface{}, alwaysIp []string) error
-	ReplyNode(addr string, msg interface{}) error
+	ReplyNode(addr string, body interface{}) error
 	Listen(addr string) error
-	ReplyClient(msg interface{}) error
+	ReplyClient(body interface{}) error
 	ChangeNetworkDelay(delay int, random bool)
 }
 
@@ -31,11 +31,11 @@ func (c *Communicate) init(cable Cable, addr string, dns []string, cableParam in
 	return c.cable.Init(cableParam, dns)
 }
 
-func (c *Communicate) replyNode(msg pipe.Message) error {
-	for _, v := range msg.To {
+func (c *Communicate) replyNode(body pipe.MessageBody) error {
+	for _, v := range body.To {
 		if addr := c.dns[v]; addr != c.addr {
 			go func() {
-				_ = c.cable.ReplyNode(addr, msg)
+				_ = c.cable.ReplyNode(addr, body)
 			}()
 		}
 	}
@@ -54,8 +54,8 @@ func (c *Communicate) listen() error {
 回复客户节点，回复不了报错。
 */
 
-func (c *Communicate) ReplyClient(msg pipe.Message) error {
-	return c.cable.ReplyClient(msg)
+func (c *Communicate) ReplyClient(body pipe.MessageBody) error {
+	return c.cable.ReplyClient(body)
 }
 
 /*
